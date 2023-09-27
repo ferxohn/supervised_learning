@@ -1,0 +1,293 @@
+---
+title: "Proyecto: Primer Parcial"
+author: "Fernando Gomez Perera y Vanessa Martínez Romero"
+date: "29 de septiembre de 2019"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+ 
+```{r libraries, include=FALSE}
+library(tidyverse)
+library(data.table)
+library(glmnet)
+```
+
+```{r import data, include=FALSE}
+# Lectura de los datos
+temp <- fread("datos_temprt.csv", select = c("Temperature", "Latitude", "Longitude", "Depth", "Month", "Ts", "Cast"))
+setnames(temp, c("Temperature", "Latitude", "Longitude", "Depth", "Month", "Ts"), c("Temp", "Y", "X", "Z", "m", "ts"))
+```
+
+## Parcial I: Proyecto I - Aprendizaje Estadístico
+
+El conjunto de datos que se analizará contiene observaciones de temperaturas medidas en diferentes ubicaciones y profundidades del Caribe mexicano obtenidas a través de la agencia NOAA. En resumen, el dataset contiene 108,464 observaciones y 7 variables. Estas variables son las siguientes:
+
+* $Temp:$ Esta es la variable de respuesta. Son las temperaturas medidas en el Caribe mexicano.
+* $Y:$ Este predictor contiene la latitud de la medición.
+* $X:$ Este predictor contiene la longitud de la medición.
+* $Y:$ Este predictor contiene la profundidad de la medición.
+* $m:$ Este predictor contiene el mes en el que se realizó la medición.
+* $ts:$ Este predictor contiene la temperatura superficial de la medición.
+* $Cast:$ Esta variable contiene el ID del dispositivo que realizó la medición. Este dispositivo es llamado cast, y nos servirá para agrupar las observaciones.
+
+```{r structure data, echo=FALSE}
+str(temp)
+```
+
+El objetivo del proyecto es proponer un modelo de regresión lineal múltiple que explique un porcentaje considerable de los datos, y que al mismo tiempo funcione bien para predecir las observaciones de nuevos casts.
+
+### Análisis exploratorio
+
+La primera variable es la longitud. Esta variable tiene una correlación muy baja respecto a la temperatura. Además, la distribución de la variable se encuentra sesgada. El boxplot nos permite visualizar que la variable contiene datos atípicos.
+```{r longitud, echo=FALSE}
+# Predictor: Longitud
+summary(temp$X)
+c("Correlación", cor(temp$X, temp$Temp))
+hist(temp$X)
+boxplot(temp$X)
+ggplot(data = temp, mapping = aes(X, Temp)) + geom_point() + geom_smooth() + theme_bw()
+```
+
+La segunda variable es la latitud. Esta variable tienen una correlación muy baja respecto a la temperatura. La distribución de la variable está sesgada. Además, no contiene datos atípicos.
+```{r latitud, echo=FALSE}
+# Predictor: Latitud
+summary(temp$Y)
+c("Correlación", cor(temp$Y, temp$Temp))
+hist(temp$Y)
+boxplot(temp$Y)
+ggplot(data = temp, mapping = aes(Y, Temp)) + geom_point() + geom_smooth() + theme_bw()
+```
+
+La tercera variable contiene la profundidad. La correlación de esta variable es alta respecto a la temperatura. Esto se puede viasualizar en la gráfica de dispersión, donde es posible notar la relación que existe entre ellas. Además, la distribución de esta variable es exponencial. Esta variable tiene muchos valores atípicos.
+```{r profundidad, echo=FALSE}
+# Predictor: Profundidad
+summary(temp$Z)
+c("Correlación", cor(temp$Z, temp$Temp))
+hist(temp$Z)
+boxplot(temp$Z)
+ggplot(data = temp, mapping = aes(Z, Temp)) + geom_point() + geom_smooth()
+```
+
+La cuarta variable contiene el mes. Esta variable tiene una correlación casi nula respecto a la temperatura. En este caso, los meses se encuentran representados de forma numéricas (del 1 al 12). Esta variable no contiene datos atípicos.
+```{r mes, echo=FALSE}
+# Predictor: Mes
+summary(temp$m)
+c("Correlación", cor(temp$m, temp$Temp))
+hist(temp$m)
+boxplot(temp$m)
+ggplot(data = temp, mapping = aes(m, Temp)) + geom_point() + geom_smooth() + theme_bw()
+```
+
+La quinta variable contiene la temperatura superficial. Esta variable tiene una correlación muy baja respecto a la temperatura. Además, la variable contiene datos atípicos.
+```{r ts, echo=FALSE}
+# Predictor: Temperatura Superficial
+summary(temp$ts)
+c("Correlación", cor(temp$ts, temp$Temp))
+hist(temp$ts)
+boxplot(temp$ts)
+ggplot(data = temp, mapping = aes(ts, Temp)) + geom_point() + geom_smooth() + theme_bw()
+```
+
+Finalmente, la variable de respuesta, la temperatura, no contiene datos atípicos. Esta variable contiene datos negativos, lo cual será importante cuando se transforme esta variable.
+```{r temperatura, echo=FALSE}
+# Variable de Respuesta: Temperatura
+summary(temp$Temp)
+boxplot(temp$Temp)
+hist(temp$Temp)
+```
+
+### Modelado y validación del modelo
+
+Aplicando la regresión lineal múltiple sin transformaciones, se obtiene lo siguiente:
+```{r regresion sin transformaciones, echo=FALSE}
+# Regresión Lineal Múltiple sin transformaciones
+reg <- lm(Temp ~ X + Y + Z + m + ts, data = temp)
+summary(reg)
+plot(reg)
+```
+
+Los resultados indican que todas las variables son significativas ya que su p-valor es muy bajo. Sin embargo, los coeficientes obtenidos son cercanos a 0 para la profundidad, el mes y la temperatura superficial. Sin embargo la r-cuadrada nos indica que se logran explicar el 74.04% de los datos con el modelo, un valor muy alto. 
+
+Podemos ver que la primera gráfica (Residual vs. Fitted) muestra una relación no lineal entre las variable.
+
+La segunda gráfica (Normal Q-Q) muestra que los datos no siguen del todo una distribución normal, debido a que estos no están cerca de la línea punteada en toda la gráfica.
+
+En la tercera gráfica (Scale-Location) se observa que la varianza de los datos no siempre es la misma, ya que algunos residuales se concentran más de un lado de la gráfica y no se distribuyen de forma equivalente sobre la línea punteada, símbolo de heterocedasticidad.
+
+La última gráfica (Residuals vs. Leverage) nos ayuda a visualizar que no existen observaciones influyentes en el modelo, ya que todas se encuentran dento de la distancia de Cook.
+
+#### Separando los datos por los casts
+
+La variable "cast" indica una muestra tomada desde un crucero oceanográfico que se detiene en algún punto del océano y lanza una sonda que mide temperaturas a diferenets profundidades. Utilizaremos esta variable para agrupar los datos, y así dividir las observaciones en conjuntos de entrenamiento, prueba y validación para los distintos modelos, de forma que podamos probar las transformaciones polinomiales usando validación cruzada.
+```{r separación de las observaciones de acuerdo a los casts, echo=FALSE}
+# Creación de un vector con los casts
+casts <- temp %>% 
+  group_by(Cast) %>% 
+  tally(sort = TRUE) %>%
+  pull(Cast)
+
+# Separación de datos de entrenamiento y de prueba para validación cruzada
+train <- casts[1:as.integer(length(casts) * 0.6)]
+test <- casts[as.integer((length(casts) * 0.6) + 1):as.integer((length(casts) * 0.8))]
+validation <- casts[as.integer((length(casts) * 0.8) + 1):length(casts)]
+
+df_train <- temp[Cast %in% train]
+df_test <- temp[Cast %in% test]
+df_validation <- temp[Cast %in% validation]
+
+c("Entrenamiento:")
+c("Total de casts", length(train), "Total de observaciones", length(df_train$Temp))
+c("Prueba:")
+c("Total de casts", length(test), "Total de observaciones", length(df_test$Temp))
+c("Validación:")
+c("Total de casts", length(validation), "Total de observaciones", length(df_validation$Temp))
+```
+
+#### Transformaciones de las variables
+
+La primera transformación se aplica sobre la temperatura. Como el modelo presenta heterocedasticidad, entonces aplicamos la ráiz a los datos de la temperatura, restando el valor mínimo a cada observación para eliminar los datos negativos y no tener raíces imaginarias.
+
+Con esta transformación, logramos subir la r-cuadrada a 0.7882.
+```{r transformación temperatura, echo=FALSE}
+# Primera transformación: Raíz de Temperatura (Para la heterocedasticidad)
+Trans.Temp <- function(Temp) { return(sqrt(Temp - min(Temp))) }
+reg <- lm(Trans.Temp(Temp) ~ X + Y + Z + m + ts, data = temp)
+summary(reg)
+```
+
+La segunda transformación consiste en agregar la interacción entre la latitud, la longitud, y la temperatura, multiplicando los predictores entre sí.
+
+Con esta transformación logramos subir la r-cuadrada a 0.8282.
+```{r transformación de interacción, echo=FALSE}
+# Segunda transformación: Interacción de predictores sobre los ejes de posicionamiento global
+reg <- lm(Trans.Temp(Temp) ~ X + Y + Z + X*Y + Y*Z + X*Y*Z + m + ts, data = temp)
+summary(reg)
+```
+
+La tercera transformación se aplica a la profundidad. Usando validación cruzada, se prueban polinomios de grados 1 al 10 sobre esta variable.
+
+Finalmente se obtiene que el grado con menor error es el 2, que es el que se usa para la transformación. Con ello, se logra subir la r-cuadrada a 0.9159.
+```{r transformación profundidad, echo=FALSE, warning=FALSE}
+# Tercera transformación: Polinomio con la profundidad
+err_test <- c()
+deg <- c()
+for(d in 1:10){
+  reg <- lm(Trans.Temp(Temp) ~ X + Y + poly(Z, d, raw = T) + X*Y + Y*Z + X*Y*Z + m + ts, data = df_train)
+  test_pred <- predict(reg, df_test)
+  err <- sum(test_pred - df_test$Temp)^2  
+  err_test <- c(err_test, err)
+  deg <- c(deg, d)
+}
+plot(deg, err_test, type = "l", xlab = "Grado", ylab = "Error de prueba", main="Validación cruzada para el polinomio de Z")
+c("Grados con menor error", order(err_test)[1:3])
+Trans.Z <- function(Z) { return(poly(Z, 2, raw = T)) }
+reg <- lm(Trans.Temp(Temp) ~ X + Y + Trans.Z(Z) + X*Y + Y*Z + X*Y*Z + m + ts, data = df_train)
+summary(reg)
+```
+
+La cuarta transformación se aplica sobre la latitud. Usando validación cruzada, se prueban distintos grados (del 1 al 10) para el polinomio sobre esta variables.
+
+Los resultados muestran que el grado con menor error es el 6. Sin embargo, para simplifcar el modelo tomamos el siguiente grado con menor error, que es el 5, logrando subir la r-cuadrada a 0.9196.
+```{r transformación latitud, echo=FALSE, warning=FALSE}
+# Cuarta transformación: Polinomio con la latitud
+err_test <- c()
+deg <- c()
+for(d in 1:10){
+  reg <- lm(Trans.Temp(Temp) ~ X + poly(Y, d, raw = T)  + Trans.Z(Z) + X*Y + Y*Z + X*Y*Z + m + ts, data = df_train)
+  test_pred <- predict(reg, df_test)
+  err <- sum(test_pred - df_test$Temp)^2  
+  err_test <- c(err_test, err)
+  deg <- c(deg, d)
+}
+plot(deg, err_test, type = "l", xlab = "Grado", ylab = "Error de prueba", main="Validación cruzada para el polinomio de Y")
+c("Grados con menor error", order(err_test)[1:3])
+Trans.Y <- function(Y) { return(poly(Y, 6, raw = T)) }
+reg <- lm(Trans.Temp(Temp) ~ X + Trans.Y(Y)  + Trans.Z(Z) + X*Y + Y*Z + X*Y*Z + m + ts, data = df_train)
+summary(reg)
+```
+
+La quinta transformación se aplica sobre la longitud. Por medio de validación cruzado se prueban distintos grados de polinomios (del 1 al 10) sobre la variable.
+
+Los resultados muestran que el grado con menor error es el 9. Sin embargo, para simplificar el modelo tomamos el siguiente grado con menor error es el 3, con el cual se logra subir la r-cuadrada a 0.9207.
+```{r transformación longitud, echo=FALSE, warning=FALSE}
+# Quinta transformación: Polinomio con la longitud
+err_test <- c()
+deg <- c()
+for(d in 1:10){
+  reg <- lm(Trans.Temp(Temp) ~ poly(X, d, raw = T) + Trans.Y(Y)  + Trans.Z(Z) + X*Y + Y*Z + X*Y*Z + m + ts, data = df_train)
+  test_pred <- predict(reg, df_test)
+  err <- sum(test_pred - df_test$Temp)^2  
+  err_test <- c(err_test, err)
+  deg <- c(deg, d)
+}
+plot(deg, err_test, type = "l", xlab = "Grado", ylab = "Error de prueba", main="Validación cruzada para el polinomio de X")
+c("Grados con menor error", order(err_test)[1:3])
+Trans.X <- function(X) { return(poly(X, 3, raw = T)) }
+reg <- lm(Trans.Temp(Temp) ~ Trans.X(X) + Trans.Y(Y)  + Trans.Z(Z) + X*Y + Y*Z + X*Y*Z + m + ts, data = df_train)
+summary(reg)
+```
+
+La sexta transformación se aplica sobre la temperatura superficial. Usando validación cruzada, se prueban distintos grados de polinomios (del 1 al 10) sobre la variable.
+
+En este caso, el grado con menor error es el 10. Sin embargo, para simplificar el modelo se toma el siguiente grado con menor error, que es el 5, logrando subir la r-cuadrada a 0.922.
+```{r transformación temperatura superficial, echo=FALSE, warning=FALSE}
+# Sexta transformación: Polinomio con la temperatura superficial
+err_test <- c()
+deg <- c()
+for(d in 1:10){
+  reg <- lm(Trans.Temp(Temp) ~ Trans.X(X) + Trans.Y(Y)  + Trans.Z(Z) + X*Y + Y*Z + X*Y*Z + m + poly(ts, d, raw = T), data = df_train)
+  test_pred <- predict(reg, df_test)
+  err <- sum(test_pred - df_test$Temp)^2  
+  err_test <- c(err_test, err)
+  deg <- c(deg, d)
+}
+plot(deg, err_test, type = "l", xlab = "Grado", ylab = "Error de prueba", main="Validación cruzada para el polinomio de ts")
+c("Grados con menor error", order(err_test)[1:3])
+Trans.ts <- function(ts) { return(poly(ts, 5, raw = T)) }
+reg <- lm(Trans.Temp(Temp) ~ Trans.X(X) + Trans.Y(Y)  + Trans.Z(Z) + X*Y + Y*Z + X*Y*Z + m + Trans.ts(ts), data = df_train)
+summary(reg)
+```
+
+Finalmente, la séptima transformación se aplica sobre el mes. Usando validación cruzada, se prueban distintos grados de polinomios (del 1 al 10) sobre la variable. 
+
+En este caso, el grado con menor error es el 1, por lo que la variable no se transforma, obteniendo el modelo final.
+```{r transformación mes, echo=FALSE, warning=FALSE}
+# Séptima transformación: Polinomio con el mes
+err_test <- c()
+deg <- c()
+for(d in 1:10){
+  reg <- lm(Trans.Temp(Temp) ~ Trans.X(X) + Trans.Y(Y)  + Trans.Z(Z) + X*Y + Y*Z + X*Y*Z + poly(m, d, raw = T) + Trans.ts(ts), data = df_train)
+  test_pred <- predict(reg, df_test)
+  err <- sum(test_pred - df_test$Temp)^2
+  err_test <- c(err_test, err)
+  deg <- c(deg, d)
+}
+plot(deg,err_test, type = "l", xlab = "Grado", ylab = "Error de prueba", main="Validación cruzada para el polinomio de m")
+c("Grados con menor error", order(err_test)[1:3])
+Trans.m <- function(m) { return(poly(m, 1, raw = T)) }
+reg_final <- lm(Trans.Temp(Temp) ~ Trans.X(X) + Trans.Y(Y)  + Trans.Z(Z) + X*Y + Y*Z + X*Y*Z + m + Trans.ts(ts), data = df_train)
+summary(reg_final)
+```
+
+### Resultados
+
+Se prueba el modelo obtenido usando los datos de validación. Para ello, se mide el error entre el modelo y los valores originales.
+```{r error modelo lineal, echo=FALSE, warning=FALSE}
+# Medir el error del modelo final
+err_model <- c()
+validation_sort <- sort(validation)
+for (i in validation_sort) {
+  cast_real <- df_validation[Cast == i]
+  cast_pred <- predict(reg_final, cast_real)
+  err_model <- c(err_model, sqrt(sum(cast_pred - cast_real$Temp)^2/length(cast_real$Temp)))
+}
+
+summary(err_model)
+hist(err_model)
+plot(validation_sort, err_model, xlab = "Casts de validación", ylab = "Error del modelo", main = "Errores del modelo por cast de validación")
+```
+
+Calculando la Raíz del Error Cuadrático Medio o RMSE (Root Mean Squared Error) por cast, se visualiza que el error mínimo tiene un valor de 32.48, mientras que el máximo llega a 98.66. El error promedio se encuentra en 58.43, un valor alto teniendo en cuenta que la temperatura máxima obtenida es de 31.50. Los errores con mayor frecuencia se encuentran entre el 50 y 60.

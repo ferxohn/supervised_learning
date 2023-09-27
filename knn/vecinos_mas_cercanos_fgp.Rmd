@@ -1,0 +1,184 @@
+---
+title: "Tarea: Vecinos Más Cercanos"
+author: "Fernando Gomez Perera"
+date: "12/10/2019"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+El presente reporte tiene como objetivo explorar la técnica de aprendizaje supervisado Vecinos Más Cercanos (K-Nearest Neighbor o kNN).
+
+```{r import, include=FALSE}
+library(data.table)
+library(ggplot2)
+library(class)
+
+# Datos del análisis
+dt <- fread("Prostate_Cancer.csv", drop = c(1))
+dt_std <- dt[, lapply(.SD, scale), .SDcols=radius:fractal_dimension]
+dt_std <- cbind(dt[, 1], dt_std)
+
+# Funciones auxiliares
+set.seed(5)
+# Numero de observaciones
+k_folds <- function(N, folds)  return(split(sample(1:N), 1:folds))
+```
+
+### Análisis Exploratorio
+
+El dataset a explorar contiene 8 variables numéricas que sirven para detectar si el diagnóstico de Cáncer de Próstata indica un crecimiento canceroso maligno (M) o benigno (B). En total, el dataset contiene 100 observaciones con 8 predictores más una variable de respuesta.
+
+```{r structure, echo=FALSE}
+str(dt)
+```
+
+El predictor numérico discreto `radius` contiene valores que van del 9 al 25, con media de 16.85. No tiene valores atípicos.
+
+```{r radius, echo=FALSE}
+summary(dt$radius)
+hist(dt$radius)
+boxplot(dt$radius)
+```
+
+El predictor numérico discreto `texture` contiene valores que van del 11 al 27, con media de 18.23. No tiene valores atípicos. La diferencia entre la media y los valores máximos y mínimos muestran un ligero sesgo en su distribución.
+
+```{r texture, echo=FALSE}
+summary(dt$texture)
+hist(dt$texture)
+boxplot(dt$texture)
+```
+
+El predictor numérico discreto `perimeter` contiene valores que van del 52 al 172, con media de 96.78. Tiene un solo valor atípico. La diferencia entre la media y los valores máximos y mínimos muestran un sesgo en su distribución.
+
+```{r perimeter, echo=FALSE}
+summary(dt$perimeter)
+hist(dt$perimeter)
+boxplot(dt$perimeter)
+```
+
+El predictor numérico discreto `area` contiene valores que van del 202 al 1878, con media de 702.9. Tiene un valor atípico. La diferencia entre la media y los valores máximos y mínimos muestran un sesgo en su distribución.
+
+```{r area, echo=FALSE}
+summary(dt$area)
+hist(dt$area)
+boxplot(dt$area)
+```
+
+El predictor numérico continuo `smoothness` contiene valores que van del 0.07 al 0.1430, con media de 0.1027. Tiene dos valores atípicos. La diferencia entre la media y los valores máximos y mínimos muestran un sesgo en su distribución.
+
+```{r smoothness, echo=FALSE}
+summary(dt$smoothness)
+hist(dt$smoothness)
+boxplot(dt$smoothness)
+```
+
+El predictor numérico continuo `compactness` contiene valores que van del 0.038 al 0.345, con media de 0.1267. Tiene tres valores atípicos. La diferencia entre la media y los valores máximos y mínimos muestran un sesgo en su distribución.
+
+```{r compactness, echo=FALSE}
+summary(dt$compactness)
+hist(dt$compactness)
+boxplot(dt$compactness)
+```
+
+El predictor numérico continuo `symmetry` contiene valores que van del 0.135 al 0.304, con media de 0.1932. Tiene tres valores atípicos. La diferencia entre la media y los valores máximos y mínimos muestran un sesgo en su distribución.
+
+```{r symmetry, echo=FALSE}
+summary(dt$symmetry)
+hist(dt$symmetry)
+boxplot(dt$symmetry)
+```
+
+El predictor numérico continuo `fractal_dimension` contiene valores que van del 0.053 al 0.097, con media de 0.06469. Tiene dos valores atípicos. La diferencia entre la media y los valores máximos y mínimos muestran un sesgo en su distribución.
+
+```{r fractal_dimension, echo=FALSE}
+summary(dt$fractal_dimension)
+hist(dt$fractal_dimension)
+boxplot(dt$fractal_dimension)
+```
+
+La variable de respuesta, llamada `diagnosis_result`, contiene 2 posibles respuestas: Si el resultado del examen es benigno o maligno. La gráfica permite visualizar que existen mayores resultados malignos que benignos.
+
+```{r diagnosis_result, echo=FALSE}
+table(dt[, 1])
+ggplot(data = dt,
+       mapping = aes(x = diagnosis_result)) +
+  geom_bar() + 
+  labs(title = "Variable de respuesta", x = "Diagnóstico", y = "Número de observaciones")
+```
+
+### Clasificación
+
+El algoritmo se aplicará de dos formas: Con los datos originales, y con los datos normalizados. Normalizar los datos permitirá disminuir drásticamente la diferencia que existe entre los valores de los predictores numéricos debido a sus escalas. Con este proceso, ahora todas las variables numéricas adquieren una media de 0, y escalas más cercanas entre sí.
+
+```{r summary std, echo=FALSE}
+summary(dt_std[, 2:9])
+```
+
+Para encontra el valor óptimo de **k** se usará **k-fold cross validation**, creando 20 grupos de 5 elementos cada uno.
+
+```{r groups, echo=FALSE}
+# Numero de dobleces
+groups <- k_folds(nrow(dt), 20)
+groups
+```
+
+#### Datos estandarizados
+
+Con los datos estandarizados, podemos notar que los valores de exactitud aumentan conforme k aumenta (con k entre 1 y 30). En este caso, el primer valor de k con mayor exactitud es de 9.
+
+```{r data_std, echo=FALSE}
+accuracy <- c()
+k <- c ()
+for (i in 1:30) {
+  num_corrects <- 0
+  num_res <- 0
+  for (fold in groups) {
+    knn_cl <- knn(train = dt_std[-fold, -1], test = dt_std[fold, -1], cl = dt_std[-fold, diagnosis_result], k = i)
+    num_corrects <- num_corrects + sum(dt_std[fold, diagnosis_result] == knn_cl)
+    num_res <- num_res + length(dt_std[fold, diagnosis_result])
+  }
+  accuracy <- append(accuracy, num_corrects / num_res)
+  k <- append(k, i)
+}
+
+for (i in which(accuracy == max(accuracy))) {
+  print(paste("K con mayor exactitud:", i, "Exactitud:", accuracy[i]))
+}
+
+plot(k, accuracy, type = "o")
+```
+
+### Datos no estandarizados
+
+Con los datos sin estandarizar, los valores de exactitud no aumentan tanto mientra k crece (con k entre 1 y 30). De hecho, el primer valor de k con exactitud mayor es el 5, y de ahi los valores de exactitud disminuyen, y alcanzan la misma exactitud cuando k llega a 21.
+
+```{r data, echo=FALSE}
+accuracy <- c()
+k <- c ()
+for (i in 1:30) {
+  num_corrects <- 0
+  num_res <- 0
+  for (fold in groups) {
+    knn_cl <- knn(train = dt[-fold, -1], test = dt[fold, -1], cl = dt[-fold, diagnosis_result], k = i)
+    num_corrects <- num_corrects + sum(dt[fold, diagnosis_result] == knn_cl)
+    num_res <- num_res + length(dt[fold, diagnosis_result])
+  }
+  accuracy <- append(accuracy, num_corrects / num_res)
+  k <- append(k, i)
+}
+
+for (i in which(accuracy == max(accuracy))) {
+  print(paste("K con mayor exactitud:", i, "Exactitud:", accuracy[i]))
+}
+
+plot(k, accuracy, type = "o")
+```
+
+### Conclusiones
+
+Los valores estandarizados permiten que la exactitud en el modelo aumente considerablemente. Como los rangos estandarizados son más cercanos entre sí, ninguno de los predictores influye más que otro. Y como se puede apreciar en las pruebas, la exactitud del modelo es muy sensible con los valores sin estandarizar, aumentando considerablemente el error entre los distintos valores que toma k.
+
+La pruebas pemriten comprobar que estandarizar los predictores permite aumentar la exactitud sin aumentar tanto el valor de k, mejorando mucho el modelo.
